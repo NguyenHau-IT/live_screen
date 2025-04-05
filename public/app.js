@@ -18,6 +18,7 @@ const roomIdValue = document.querySelector('.room-id-value');
 const copyRoomIdBtn = document.getElementById('copyRoomId');
 const usernameInput = document.getElementById('usernameInput');
 const saveUsernameBtn = document.getElementById('saveUsername');
+const notification = document.getElementById('notification');
 
 // Initialize UI state
 function initializeUI() {
@@ -699,4 +700,7 @@ function updateStreamStatus(streamId, state) {
             video.style.display = 'block';
         }
     }
-} 
+}
+
+// Initialize socket connection
+initializeSocket(); 

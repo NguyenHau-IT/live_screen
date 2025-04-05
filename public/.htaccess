@@ -1,0 +1,27 @@
+# Enable CORS
+Header set Access-Control-Allow-Origin "*"
+Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+Header set Access-Control-Allow-Headers "Content-Type"
+
+# Force HTTPS
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Security headers
+Header set X-Content-Type-Options "nosniff"
+Header set X-Frame-Options "SAMEORIGIN"
+Header set X-XSS-Protection "1; mode=block"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+
+# Cache control
+<FilesMatch "\.(html|css|js|png|jpg|jpeg|gif|ico)$">
+    Header set Cache-Control "max-age=31536000, public"
+</FilesMatch>
+
+# Error pages
+ErrorDocument 404 /error.html
+ErrorDocument 500 /error.html
+
+# Prevent directory listing
+Options -Indexes 

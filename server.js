@@ -3,17 +3,46 @@ const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const helmet = require('helmet');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+        origin: process.env.NODE_ENV === 'production' 
+            ? "https://live-screen-sharing.herokuapp.com"
+            : "*",
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
 
-app.use(cors());
+// Security middleware
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "cdn.socket.io", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
+            styleSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            connectSrc: ["'self'", "wss:", "ws:", "https:"],
+            mediaSrc: ["'self'", "blob:"],
+            fontSrc: ["'self'", "cdnjs.cloudflare.com"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: []
+        }
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production'
+        ? "https://live-screen-sharing.herokuapp.com"
+        : "*",
+    credentials: true
+}));
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Store rooms and their active streams
@@ -67,6 +96,17 @@ function validateRoomId(roomId) {
     return /^[A-Z0-9]{6}$/.test(roomId);
 }
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).redirect('/error.html?code=500&message=' + encodeURIComponent('Lỗi máy chủ'));
+});
+
+// Handle 404 errors
+app.use((req, res) => {
+    res.status(404).redirect('/error.html?code=404&message=' + encodeURIComponent('Không tìm thấy trang'));
+});
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
     let currentRoom = null;
@@ -113,7 +153,7 @@ io.on('connection', (socket) => {
             });
         } catch (error) {
             console.error('Error creating room:', error);
-            socket.emit('error', 'Lỗi khi tạo phòng: ' + error.message);
+            socket.emit('error', 'Không thể tạo phòng. Vui lòng thử lại.');
         }
     });
 
@@ -191,7 +231,7 @@ io.on('connection', (socket) => {
             logRooms();
         } catch (error) {
             console.error('Error joining room:', error);
-            socket.emit('error', 'Lỗi khi tham gia phòng: ' + error.message);
+            socket.emit('error', 'Không thể tham gia phòng. Vui lòng thử lại.');
         }
     });
 
@@ -223,8 +263,8 @@ io.on('connection', (socket) => {
                 console.log('Current streams in room:', Array.from(room.streams.entries()));
             }
         } catch (error) {
-            console.error('Error starting share:', error);
-            socket.emit('error', 'Lỗi khi bắt đầu chia sẻ màn hình');
+            console.error('Error starting screen share:', error);
+            socket.emit('error', 'Không thể bắt đầu chia sẻ màn hình. Vui lòng thử lại.');
         }
     });
 
@@ -234,41 +274,42 @@ io.on('connection', (socket) => {
             if (room) {
                 room.streams.delete(socket.id);
                 io.to(roomId).emit('stream-ended', socket.id);
-                console.log(`User ${socket.id} stopped sharing in room: ${roomId}`);
+                console.log(`Stream ended in room: ${roomId}`);
             }
         } catch (error) {
-            console.error('Error stopping share:', error);
-            socket.emit('error', 'Lỗi khi dừng chia sẻ màn hình');
+            console.error('Error stopping screen share:', error);
+            socket.emit('error', 'Không thể dừng chia sẻ màn hình. Vui lòng thử lại.');
         }
     });
 
     // Handle WebRTC signaling
     socket.on('offer', ({ offer, streamId, username }) => {
-        console.log('Forwarding offer from', username, `(${socket.id})`, 'to', streamId);
-        io.to(streamId).emit('offer', {
-            offer,
-            streamId: socket.id,
-            username: username
-        });
+        try {
+            socket.to(streamId).emit('offer', { offer, streamId });
+            console.log(`Offer sent from ${username} to ${streamId}`);
+        } catch (error) {
+            console.error('Error handling offer:', error);
+            socket.emit('error', 'Lỗi khi xử lý yêu cầu kết nối. Vui lòng thử lại.');
+        }
     });
 
     socket.on('answer', ({ answer, streamId }) => {
-        const room = rooms.get(currentRoom);
-        const username = room ? room.users.get(socket.id) : 'Unknown';
-        console.log('Forwarding answer from', username, `(${socket.id})`, 'to', streamId);
-        io.to(streamId).emit('answer', {
-            answer,
-            streamId: socket.id,
-            username: username
-        });
+        try {
+            socket.to(streamId).emit('answer', { answer, streamId });
+            console.log(`Answer sent to ${streamId}`);
+        } catch (error) {
+            console.error('Error handling answer:', error);
+            socket.emit('error', 'Lỗi khi xử lý phản hồi kết nối. Vui lòng thử lại.');
+        }
     });
 
     socket.on('ice-candidate', ({ candidate, streamId }) => {
-        console.log('Forwarding ICE candidate from', socket.id, 'to', streamId);
-        io.to(streamId).emit('ice-candidate', {
-            candidate,
-            streamId: socket.id
-        });
+        try {
+            socket.to(streamId).emit('ice-candidate', { candidate, streamId });
+            console.log(`ICE candidate sent to ${streamId}`);
+        } catch (error) {
+            console.error('Error handling ICE candidate:', error);
+        }
     });
 
     socket.on('update-username', ({ roomId, oldUsername, newUsername }) => {
@@ -290,11 +331,11 @@ io.on('connection', (socket) => {
                     newUsername: newUsername
                 });
                 
-                console.log(`User ${oldUsername} changed name to ${newUsername} in room ${roomId}`);
+                console.log(`Username updated in room ${roomId}: ${oldUsername} -> ${newUsername}`);
             }
         } catch (error) {
             console.error('Error updating username:', error);
-            socket.emit('error', 'Lỗi khi cập nhật tên');
+            socket.emit('error', 'Không thể cập nhật tên người dùng. Vui lòng thử lại.');
         }
     });
 
@@ -316,7 +357,7 @@ io.on('connection', (socket) => {
                     // If host disconnects, close the room
                     io.to(currentRoom).emit('room-closed');
                     rooms.delete(currentRoom);
-                    console.log(`Room ${currentRoom} closed because host ${username} (${socket.id}) disconnected`);
+                    console.log(`Room closed: ${currentRoom}`);
                 } else if (room.streams.has(socket.id)) {
                     // If sharing user disconnects, notify others
                     room.streams.delete(socket.id);
